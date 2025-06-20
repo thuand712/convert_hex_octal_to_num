@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <title>Blz Tooltip Finder & Replacer</title>
+  <style>
+    body { font-family: Arial; padding: 20px; }
+    input[type="file"], button { margin: 10px 0; }
+    pre { background: #f7f7f7; padding: 10px; border: 1px solid #ddd; max-height: 500px; overflow: auto; }
+  </style>
+</head>
+<body>
+
+<h2>Tìm kiếm và thay thế BlzGetAbilityExtendedTooltip</h2>
+
+<label>File war3map.j:</label><br>
+<input type="file" id="tooltipFile" accept=".txt,.j"><br>
+
+<label>File chứa Ubertip=:</label><br>
+<input type="file" id="ubtipFile" accept=".txt"><br>
+
+<button onclick="processFiles()">Tìm kiếm</button>
+<button onclick="replaceAndExport()">Thay thế & Tải file time_war3map.j</button>
+
+<h3>Kết quả tìm được:</h3>
+<pre id="output"></pre>
+
+<script>
+// Hàm chuyển HEX sang ASCII
+function hexToAscii(hex) {
+  try {
+    return hex.match(/.{1,2}/g).map(byte => String.fromCharCode(parseInt(byte, 16))).join('');
+  } catch {
+    return '';
+  }
+}
+
+// Tách chuỗi có dấu ngoặc kép, giữ nguyên "abc, def"
+function splitWithQuotes(str) {
+  const regex = /"([^"]*)"|[^,]+/g;
+  const matches = [];
+  let match;
+  while ((match = regex.exec(str)) !== null) {
+    matches.push(match[1] !== undefined ? match[1] : match[0].trim());
+  }
+  return matches.filter(s => s !== '');
+}
+
+// Dữ liệu toàn cục
+let originalTooltipContent = '';
+let ubertipMap = {};
+
+// Xử lý tìm kiếm và hiển thị kết quả
+function processFiles() {
+  const tooltipFile = document.getElementById('tooltipFile').files[0];
+  const ubtipFile = document.getElementById('ubtipFile').files[0];
+  const output = document.getElementById('output');
+  output.textContent = 'Đang xử lý...';
+
+  if (!tooltipFile || !ubtipFile) {
+    alert('Vui lòng chọn cả hai file.');
+    return;
+  }
+
+  Promise.all([tooltipFile.text(), ubtipFile.text()])
+    .then(([tooltipContent, ubtipContent]) => {
+      originalTooltipContent = tooltipContent;
+
+      // Tạo map từ file Ubertip
+      const lines = ubtipContent.split('\n');
+      let currentKey = '';
+      for (let line of lines) {
+        const matchKey = line.match(/^\[(.+?)\]/);
+        if (matchKey) {
+          currentKey = matchKey[1].trim();
+        } else if (line.includes('Ubertip=') && currentKey) {
+          ubertipMap[currentKey] = line.split('Ubertip=')[1].trim();
+        }
+      }
+
+      const regex = /BlzGetAbilityExtendedTooltip\(\$(\w+),(\d+)\)/g;
+      const tooltipMatches = new Set();
+      let match;
+
+      while ((match = regex.exec(tooltipContent)) !== null) {
+        const [fullMatch, hexId, indexStr] = match;
+        const index = parseInt(indexStr, 10);
+        const asciiId = hexToAscii(hexId);
+        if (asciiId && ubertipMap[asciiId]) {
+          tooltipMatches.add(JSON.stringify({
+            fullMatch,
+            id: asciiId,
+            index: index
+          }));
+        }
+      }
+
+      const results = [];
+      for (let json of tooltipMatches) {
+        const item = JSON.parse(json);
+        const { fullMatch, id, index } = item;
+        const ubertip = ubertipMap[id];
+        const parts = splitWithQuotes(ubertip);
+        const value = parts[index]?.trim();
+        if (value) {
+          results.push(`${fullMatch} = ${value}`);
+        }
+      }
+
+      output.textContent = results.length ? results.join('\n') : 'Không tìm thấy kết quả.';
+    });
+}
+
+// Thay thế toàn bộ và xuất file mới
+function replaceAndExport() {
+  if (!originalTooltipContent || Object.keys(ubertipMap).length === 0) {
+    alert("Hãy nhấn nút 'Tìm kiếm' trước khi thay thế!");
+    return;
+  }
+
+  const regex = /BlzGetAbilityExtendedTooltip\(\$(\w+),(\d+)\)/g;
+  const replaced = originalTooltipContent.replace(regex, (match, hexId, indexStr) => {
+    const index = parseInt(indexStr, 10);
+    const asciiId = hexToAscii(hexId);
+    const ubertip = ubertipMap[asciiId];
+    if (ubertip) {
+      const parts = splitWithQuotes(ubertip);
+      const value = parts[index]?.trim();
+      if (value) return `"${value}"`;
+    }
+    return match;
+  });
+
+  // Tải file mới
+  const blob = new Blob([replaced], { type: "text/plain" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = "time_war3map.j";
+  link.click();
+}
+</script>
+
+</body>
+</html>
